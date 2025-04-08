@@ -1,0 +1,17 @@
+##  `.gitignore`
+
+```gitignore
+# Build
+bin/
+obj/
+
+# User settings
+*.user
+*.suo
+
+# Output files
+*.json
+*.log
+
+# VSCode settings
+.vscode/
