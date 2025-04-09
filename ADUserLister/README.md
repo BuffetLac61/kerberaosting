@@ -29,13 +29,13 @@ Un outil en **C# cross-platform** pour se connecter à un serveur LDAP (Active D
 ### 🧑‍💻 Lancer le programme
 
 ```bash
-dotnet run -- <IP_AD> <PORT>
+dotnet run <IP_AD> <PORT>
 ```
 
 Exemple :
 
 ```bash
-dotnet run -- 192.168.1.10 389
+dotnet run 192.168.1.10 389
 ```
 
 ### 🔐 Authentification
@@ -110,7 +110,7 @@ cd ADUserLister
 
 ```bash
 dotnet build
-dotnet run -- <IP> <PORT>
+dotnet run <IP> <PORT>
 ```
 
 ---
