@@ -1,144 +1,195 @@
-﻿using System;
-using System.Collections.Generic;
-using System.DirectoryServices.Protocols;
-using System.Net;
+﻿using LdapForNet;
 using System.Text.Json;
-using System.IO;
-using System.Net.Sockets;
-
-namespace ADUserLister
+public class UserInfo
 {
-    class Program
+    public string Username { get; set; }
+    public bool HasSpn { get; set; }
+    public bool IsDisabled { get; set; }
+    public bool IsKerberoastable { get; set; }
+}
+
+class Program
+{
+    static string ReadPassword()
     {
-        static void Main(string[] args)
+        string password = "";
+        ConsoleKeyInfo key;
+
+        do
         {
-            if (args.Length != 2)
+            key = Console.ReadKey(true);
+            if (key.Key != ConsoleKey.Backspace && key.Key != ConsoleKey.Enter)
             {
-                Console.WriteLine("Usage : ADUserLister.exe <IP_AD> <PORT>");
+                password += key.KeyChar;
+                Console.Write("*");
+            }
+            else if (key.Key == ConsoleKey.Backspace && password.Length > 0)
+            {
+                password = password[..^1];
+                Console.Write("\b \b");
+            }
+        } while (key.Key != ConsoleKey.Enter);
+
+        Console.WriteLine();
+        return password;
+    }
+
+    static void Main(string[] args)
+    {
+        if (args.Length != 2)
+        {
+            Console.WriteLine("Usage : ADUserLister <IP> <PORT>");
+            return;
+        }
+
+        string ip = args[0];
+        if (!int.TryParse(args[1], out int port))
+        {
+            Console.WriteLine("[!] Port invalide.");
+            return;
+        }
+
+        try
+        {
+            // Connexion LDAP
+            using var ldap = new LdapConnection();
+            ldap.Connect(ip, port);
+
+            Console.WriteLine("[+] Connexion LDAP réussie !");
+
+            // Bind anonyme
+            ldap.Bind("simple", null, null);
+            Console.WriteLine("[+] Connexion anonyme réussie !");
+
+            // Lecture du RootDSE
+            var rootDse = ldap.GetRootDse();
+
+            if (rootDse == null)
+            {
+                Console.WriteLine("[!] Impossible de récupérer le RootDSE.");
+                return;
+            }
+            Console.WriteLine("[+] RootDSE récupéré avec succès !");
+            Console.WriteLine("------------------------------------------RootDSE---------------------------------------------\n");
+            string? defaultNamingContext = null;
+            foreach (var attr in rootDse.DirectoryAttributes)
+            {
+                var name = attr.Name;
+                var values = attr.GetValues<string>();
+
+                Console.WriteLine($"  {name}: {string.Join(", ", values)}");
+
+                if (name.Equals("defaultNamingContext", StringComparison.OrdinalIgnoreCase))
+                    {
+                        defaultNamingContext = values.FirstOrDefault();
+                    }
+            }      
+            Console.WriteLine("\n--------------------------------------End of RootDSE----------------------------------------\n");
+
+            // Choix du bon Domain Name
+            if (string.IsNullOrEmpty(defaultNamingContext))
+            {
+                Console.WriteLine("[!] defaultNamingContext non trouvé dans le RootDSE.");
                 return;
             }
 
-            string ip = args[0];
-            if (!int.TryParse(args[1], out int port))
+            Console.WriteLine($"[*] Domaine détecté automatiquement : {defaultNamingContext}");
+            Console.Write("Souhaitez-vous l’utiliser ? (O/n) : ");
+            var response = Console.ReadLine()?.Trim().ToLower();
+
+            if (response == "n" || response == "non")
             {
-                Console.WriteLine("[!] Erreur : Port invalide.");
-                return;
+                Console.Write("Veuillez entrer le base DN manuellement (ex: DC=corp,DC=local) : ");
+                var inputDn = Console.ReadLine()?.Trim();
+
+                if (!string.IsNullOrEmpty(inputDn))
+                    defaultNamingContext = inputDn;
             }
 
-            // 🔍 Test rapide du port TCP
-            if (!TestPort(ip, port))
-            {
-                Console.WriteLine($"[!] Impossible de se connecter à {ip}:{port} (port fermé ou non routable)");
-                return;
-            }
+            var baseDn = defaultNamingContext.ToLowerInvariant();
 
+            Console.WriteLine($"[+] Domaine utilisé pour la recherche : {baseDn}");
+
+            // Authentification avec un utilisateur LDAP pour plus d'informations
+            Console.Write("\nEntrez l'identifiant LDAP (ex: administrator@corp.local) (laisser vide pour une analyse anonyme): ");
+            var user = Console.ReadLine()?.Trim();
+
+            Console.Write("Mot de passe (laisser vide pour une analyse anonyme): ");
+            var password = ReadPassword();
             try
             {
-                var identifier = new LdapDirectoryIdentifier(ip, port);
-                var connection = new LdapConnection(identifier)
+                if (string.IsNullOrEmpty(user) && string.IsNullOrEmpty(password))
                 {
-                    AuthType = AuthType.Negotiate
-                };
-
-                connection.SessionOptions.ProtocolVersion = 3;
-
-                Console.WriteLine("[*] Connexion au serveur LDAP...");
-                try
-                {
-                    connection.Bind(); // Peut lancer une LdapException
+                    // Bind anonyme
+                    ldap.Bind("simple", null, null);
+                    Console.WriteLine("[+] Connexion anonyme réussie !");
                 }
-                catch (LdapException ldapEx)
+                else
                 {
-                    Console.WriteLine($"[!] Erreur de connexion LDAP : {ldapEx.Message}");
-                    return;
+                    // Bind simple
+                    ldap.Bind("simple", user, password);
+                    Console.WriteLine("[+] Authentification réussie !");
                 }
-
-                // Auto-découverte du DN via RootDSE
-                var rootDseRequest = new SearchRequest(
-                    "",
-                    "(objectClass=*)",
-                    SearchScope.Base,
-                    "defaultNamingContext"
-                );
-
-                var rootDseResponse = (SearchResponse)connection.SendRequest(rootDseRequest);
-                string defaultNamingContext = rootDseResponse.Entries[0].Attributes["defaultNamingContext"][0].ToString();
-
-                Console.WriteLine($"[*] Domaine détecté : {defaultNamingContext}");
-                Console.Write("Voulez-vous utiliser ce domaine ? (O/n) : ");
-                string input = Console.ReadLine()?.Trim().ToLower();
-
-                string baseDN = (input == "n" || input == "non")
-                    ? DemanderDNManuellement()
-                    : defaultNamingContext;
-
-                Console.WriteLine($"[*] Utilisation de la base DN : {baseDN}");
-
-                // Requête LDAP des utilisateurs
-                var searchRequest = new SearchRequest(
-                    baseDN,
-                    "(objectClass=user)",
-                    SearchScope.Subtree,
-                    new[] { "sAMAccountName", "userAccountControl", "servicePrincipalName" }
-                );
-
-                var response = (SearchResponse)connection.SendRequest(searchRequest);
-                var userList = new List<object>();
-
-                foreach (SearchResultEntry entry in response.Entries)
-                {
-                    string sam = entry.Attributes["sAMAccountName"]?[0].ToString() ?? "N/A";
-
-                    int uac = 0;
-                    if (entry.Attributes["userAccountControl"] != null && entry.Attributes["userAccountControl"].Count > 0)
-                        int.TryParse(entry.Attributes["userAccountControl"][0].ToString(), out uac);
-
-                    bool hasSPN = entry.Attributes["servicePrincipalName"] != null;
-                    bool isDisabled = (uac & 0x0002) != 0;
-                    bool isKerberoastable = hasSPN && !isDisabled;
-
-                    userList.Add(new
-                    {
-                        Username = sam,
-                        HasSPN = hasSPN,
-                        UserAccountControl = uac,
-                        IsDisabled = isDisabled,
-                        IsKerberoastable = isKerberoastable
-                    });
-                }
-
-                string jsonOutput = JsonSerializer.Serialize(userList, new JsonSerializerOptions { WriteIndented = true });
-                File.WriteAllText("users.json", jsonOutput);
-
-                Console.WriteLine("[+] Export terminé : users.json");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[!] Erreur critique : {ex.Message}");
+                Console.WriteLine($"[!] Échec de l'authentification : {ex.Message}");
+                return;
             }
-        }
 
-        static string DemanderDNManuellement()
-        {
-            Console.Write("Veuillez entrer manuellement le base DN (ex: DC=mondomaine,DC=local) : ");
-            return Console.ReadLine()?.Trim() ?? "";
-        }
+            // Recherche des utilisateurs
+	        var entries = ldap.Search(baseDn,"(objectClass=user)");
+            Console.WriteLine($"[+] Utilisateurs trouvés : {entries.Count}");
 
-        static bool TestPort(string ip, int port, int timeoutMs = 3000)
+            // Analyse de utilisateurs
+            Console.WriteLine("\n[+] Analyse des comptes Kerberoastables :");
+            var userResults = new List<UserInfo>();
+            foreach (var entry in entries)
+            {
+                var attrs = entry.DirectoryAttributes;
+
+                string username = attrs.Contains(LdapAttributes.SAmAccountName)
+                    ? attrs[LdapAttributes.SAmAccountName].GetValues<string>().FirstOrDefault()
+                    : "(inconnu)";
+
+                string uacStr = attrs.Contains(LdapAttributes.UserAccountControl)
+                    ? attrs[LdapAttributes.UserAccountControl].GetValues<string>().FirstOrDefault()
+                    : "0";
+
+                int.TryParse(uacStr, out int uac);
+                bool isDisabled = (uac & 0x0002) != 0;
+
+                bool hasSpn = attrs.Contains("servicePrincipalName");
+                bool isKerberoastable = hasSpn && !isDisabled;
+
+                userResults.Add(new UserInfo
+                {
+                    Username = username,
+                    HasSpn = hasSpn,
+                    IsDisabled = isDisabled,
+                    IsKerberoastable = isKerberoastable
+                });
+
+
+                Console.WriteLine($"Utilisateur : {username}");
+                Console.WriteLine($"  - SPN : {(hasSpn ? "✔️ présent" : "❌ absent")}");
+                Console.WriteLine($"  - Compte actif : {(isDisabled ? "❌ NON" : "✔️ OUI")}");
+                Console.WriteLine($"  - ⚠️ Kerberoastable : {(isKerberoastable ? "🧨 OUI" : "✅ NON")}\n");
+            }
+
+            var jsonOptions = new JsonSerializerOptions
+            {
+                WriteIndented = true // format lisible pour l'export JSON
+            };
+
+            File.WriteAllText("users.json", JsonSerializer.Serialize(userResults, jsonOptions));
+            Console.WriteLine("[+] Export JSON terminé : users.json");
+
+            ldap.Dispose(); // Plus propre
+        }
+        catch (Exception ex)
         {
-            try
-            {
-                using var client = new TcpClient();
-                var result = client.BeginConnect(ip, port, null, null);
-                bool success = result.AsyncWaitHandle.WaitOne(timeoutMs);
-                if (!success) return false;
-                client.EndConnect(result);
-                return true;
-            }
-            catch
-            {
-                return false;
-            }
+            Console.WriteLine($"[!] Erreur de connexion : {ex.Message}");
         }
     }
 }
