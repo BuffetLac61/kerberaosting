@@ -27,12 +27,12 @@ Il est conçu pour une utilisation **simple, rapide, sécurisée** par les admin
 Depuis le dossier du projet, exécutez :
 
 ```bash
-dotnet run -- <IP_DU_SERVEUR_AD> <PORT>
+dotnet run <IP_DU_SERVEUR_AD> <PORT>
 ```
 
 Exemple :
 ```bash
-dotnet run -- 192.168.1.100 389
+dotnet run 192.168.1.100 389
 ```
 
 ### 3. Authentification
