@@ -8,7 +8,7 @@ Ce guide permet à un évaluateur de **reproduire un environnement de test Activ
 
 - VMware Workstation ou VMware Player (Linux ou Windows)
 - Une **ISO Windows Server 2019/2022** (évaluation gratuite sur Microsoft)
-- Une licence d’évaluation ou clé générique : `N69G4-B89J2-4G8F4-WWYCC-J464C`
+- Une licence d’évaluation ou clé générique : https://learn.microsoft.com/fr-fr/windows-server/get-started/kms-client-activation-keys?tabs=server2022%2Cwindows1110ltsc%2Cversion1803%2Cwindows81#windows-server-ltsc
 - Connexion Internet pour les mises à jour Windows
 
 ---
@@ -93,11 +93,6 @@ Sur la machine hôte (Linux ou Windows) où est exécuté `ADUserLister` :
 ```bash
 ping 192.168.146.138
 ```
-
-Puis tester la connectivité LDAP avec :
-```bash
-telnet 192.168.146.138 389
-```
 Ou avec l’outil directement :
 ```bash
 dotnet run -- 192.168.146.138 389
@@ -124,5 +119,5 @@ dotnet run -- 192.168.146.138 389
 
 ---
 
-**Ce guide permet de valider la détection de comptes Kerberoastables dans un environnement contrôlé.**
+**Ce guide permet de valider la détection de comptes Kerberoastables dans un environnement contrôlé comparable à celui utilisé pour le développement de l'outiil.**
 
